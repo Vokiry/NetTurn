@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Vokiry/NetTurn/core"
 	"github.com/Vokiry/NetTurn/core/crypto"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -49,14 +48,14 @@ type RTPConfig struct {
 }
 
 // NewRTPConfig создает конфигурацию со случайным SSRC и параметрами в зависимости от типа обфускации.
-func NewRTPConfig(obfs core.ObfsType) *RTPConfig {
+func NewRTPConfig(obfs ObfsType) *RTPConfig {
 	var buf [4]byte
 	_, _ = rand.Read(buf[:])
 	ssrc := binary.BigEndian.Uint32(buf[:])
 
 	pt := uint8(PayloadTypeAudio)
 	padMax := PaddingMaxAudio
-	if obfs == core.ObfsVideo {
+	if obfs == ObfsVideo {
 		pt = PayloadTypeVideo
 		padMax = PaddingMaxVideo
 	}

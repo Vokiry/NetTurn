@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/Vokiry/NetTurn/core"
 	"github.com/Vokiry/NetTurn/core/crypto"
 )
 
@@ -14,7 +13,7 @@ func TestWrapUnwrapRTP(t *testing.T) {
 		t.Fatalf("DeriveKey failed: %v", err)
 	}
 
-	cfgAudio := NewRTPConfig(core.ObfsAudio)
+	cfgAudio := NewRTPConfig(ObfsAudio)
 	stateAudio := NewRTPState()
 
 	originalPayload := []byte("Hello, this is an IP packet test payload!")
@@ -58,7 +57,7 @@ func TestWrapUnwrapRTP(t *testing.T) {
 
 func TestRTPVideoMode(t *testing.T) {
 	key, _ := crypto.DeriveKey("videoTestPass")
-	cfgVideo := NewRTPConfig(core.ObfsVideo)
+	cfgVideo := NewRTPConfig(ObfsVideo)
 	stateVideo := NewRTPState()
 
 	if cfgVideo.PayloadType != PayloadTypeVideo {

@@ -2,6 +2,8 @@ package core
 
 import (
 	"time"
+
+	"github.com/Vokiry/NetTurn/core/protocol"
 )
 
 // ConnectionState отражает текущее состояние жизненного цикла туннеля.
@@ -52,12 +54,12 @@ type PipelineStepEvent struct {
 	Time    time.Time     `json:"time"`
 }
 
-// ObfsType тип медиа-обфускации RTP.
-type ObfsType string
+// ObfsType алиас типа медиа-обфускации RTP.
+type ObfsType = protocol.ObfsType
 
 const (
-	ObfsAudio ObfsType = "audio" // Opus, PayloadType 111, pad <= 24
-	ObfsVideo ObfsType = "video" // VP8, PayloadType 96, pad <= 60
+	ObfsAudio = protocol.ObfsAudio // Opus, PayloadType 111, pad <= 24
+	ObfsVideo = protocol.ObfsVideo // VP8, PayloadType 96, pad <= 60
 )
 
 // CaptchaMode режим решения капчи.
