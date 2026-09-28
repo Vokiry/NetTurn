@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -11,6 +12,13 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+func init() {
+	// Исправление известного бага WebKitGTK на Wayland + Nvidia (Error 71 Protocol error)
+	if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
+		_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
+}
 
 func main() {
 	app := NewApp()
