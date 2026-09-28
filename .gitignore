@@ -17,6 +17,7 @@ dist/
 # Go
 vendor/
 go.work
+go.work.sum
 
 # Node / Web UI
 node_modules/
