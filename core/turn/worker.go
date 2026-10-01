@@ -62,16 +62,18 @@ func NewWorker(id int, peerAddr *net.UDPAddr, password string, obfs protocol.Obf
 	return w, nil
 }
 
+type connectedUDPConn struct {
+	*net.UDPConn
+}
+
+func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) {
+	return c.Write(p)
+}
+
 // Start подключается к TURN-серверу по полученным креденшелам, запрашивает аллокацию и запускает циклы приема и keepalive.
 func (w *Worker) Start(ctx context.Context, creds *vk.TurnCredentials, useTCP bool) error {
 	w.ctx, w.cancel = context.WithCancel(ctx)
 	w.state.Store(WorkerStateConnecting)
-
-	_, err := net.ResolveUDPAddr("udp", creds.ServerAddr)
-	if err != nil {
-		w.state.Store(WorkerStateError)
-		return fmt.Errorf("worker %d: resolve turn addr %s: %w", w.id, creds.ServerAddr, err)
-	}
 
 	var conn net.PacketConn
 	if useTCP {
@@ -83,12 +85,17 @@ func (w *Worker) Start(ctx context.Context, creds *vk.TurnCredentials, useTCP bo
 		}
 		conn = pionturn.NewSTUNConn(tcpConn)
 	} else {
-		udpConn, lErr := net.ListenPacket("udp", "0.0.0.0:0")
-		if lErr != nil {
+		turnUDPAddr, err := net.ResolveUDPAddr("udp", creds.ServerAddr)
+		if err != nil {
 			w.state.Store(WorkerStateError)
-			return fmt.Errorf("worker %d: listen udp: %w", w.id, lErr)
+			return fmt.Errorf("worker %d: resolve turn addr %s: %w", w.id, creds.ServerAddr, err)
 		}
-		conn = udpConn
+		udpConn, dErr := net.DialUDP("udp", nil, turnUDPAddr)
+		if dErr != nil {
+			w.state.Store(WorkerStateError)
+			return fmt.Errorf("worker %d: dial udp turn: %w", w.id, dErr)
+		}
+		conn = &connectedUDPConn{udpConn}
 	}
 	w.localConn = conn
 

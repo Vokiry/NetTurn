@@ -122,7 +122,7 @@ func DefaultEngineConfig() EngineConfig {
 		Workers:          9,
 		Obfs:             ObfsAudio,
 		CaptchaMode:      CaptchaModeAuto,
-		DNS:              "1.1.1.1",
+		DNS:              "",
 		MTU:              1280,
 		TunName:          "netturn0",
 		LANBridgeEnabled: false,

@@ -16,14 +16,14 @@ func TestSolvePoW(t *testing.T) {
 	powInput := "vk_test_pow_input_12345_"
 	difficulty := 3 // 3 ведущих нуля
 
-	hash, err := SolvePoW(ctx, powInput, difficulty)
+	powRes, err := SolvePoW(ctx, powInput, difficulty)
 	if err != nil {
 		t.Fatalf("SolvePoW failed: %v", err)
 	}
 
 	target := strings.Repeat("0", difficulty)
-	if !strings.HasPrefix(hash, target) {
-		t.Fatalf("PoW hash %q does not start with %q", hash, target)
+	if !strings.HasPrefix(powRes.Hash, target) {
+		t.Fatalf("PoW hash %q does not start with %q", powRes.Hash, target)
 	}
 }
 
@@ -71,10 +71,11 @@ func TestPoWVerification(t *testing.T) {
 	ctx := context.Background()
 	input := "benchmark_test_"
 	diff := 2
-	h, err := SolvePoW(ctx, input, diff)
+	res, err := SolvePoW(ctx, input, diff)
 	if err != nil {
 		t.Fatalf("SolvePoW error: %v", err)
 	}
+	h := res.Hash
 	if len(h) != 64 {
 		t.Fatalf("SHA256 hex string must be 64 characters")
 	}

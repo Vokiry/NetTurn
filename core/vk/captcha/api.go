@@ -33,19 +33,32 @@ type BootstrapData struct {
 }
 
 var (
-	rePowInput   = regexp.MustCompile(`["']?pow[_-]?[iI]nput["']?\s*:\s*["']([^"']+)["']`)
-	reDifficulty = regexp.MustCompile(`["']?difficulty["']?\s*:\s*(\d+)`)
+	// Современный формат VK 2025/2026: }('pow_input', difficulty, 'pow_timeout'
+	reModernPow = regexp.MustCompile(`\}\(\s*['"]([A-Za-z0-9_-]+)['"]\s*,\s*(\d+)\s*,\s*['"]pow_timeout['"]`)
+	// Устаревший формат в JSON
+	reLegacyPowInput   = regexp.MustCompile(`["']?pow[_-]?[iI]nput["']?\s*:\s*["']([^"']+)["']`)
+	reLegacyDifficulty = regexp.MustCompile(`["']?difficulty["']?\s*:\s*(\d+)`)
 )
 
 // ParseBootstrap извлекает powInput и difficulty из HTML страницы id.vk.ru/not_robot_captcha.
 func ParseBootstrap(html string) (*BootstrapData, error) {
-	inputMatches := rePowInput.FindStringSubmatch(html)
+	// Сначала проверяем современный формат
+	if m := reModernPow.FindStringSubmatch(html); len(m) >= 3 {
+		diff, _ := strconv.Atoi(m[2])
+		return &BootstrapData{
+			PowInput:   m[1],
+			Difficulty: diff,
+		}, nil
+	}
+
+	// Фолбек на легаси формат
+	inputMatches := reLegacyPowInput.FindStringSubmatch(html)
 	if len(inputMatches) < 2 {
 		return nil, fmt.Errorf("%w: pow_input not found", ErrBootstrapFailed)
 	}
 
-	diff := 3 // базовое значение по умолчанию
-	diffMatches := reDifficulty.FindStringSubmatch(html)
+	diff := 3
+	diffMatches := reLegacyDifficulty.FindStringSubmatch(html)
 	if len(diffMatches) >= 2 {
 		if d, err := strconv.Atoi(diffMatches[1]); err == nil && d > 0 {
 			diff = d
@@ -118,10 +131,22 @@ func SolveCaptchaLevel1(ctx context.Context, client *http.Client, challenge *Cha
 	}
 
 	// 2. Решение PoW
-	powHash, err := SolvePoW(ctx, bootstrap.PowInput, bootstrap.Difficulty)
+	powRes, err := SolvePoW(ctx, bootstrap.PowInput, bootstrap.Difficulty)
 	if err != nil {
 		return "", fmt.Errorf("captcha: PoW computation failed: %w", err)
 	}
+
+	// Формируем payload формата v2.base64(json)
+	powPayload := map[string]any{
+		"hash":        powRes.Hash,
+		"nonce":       powRes.Nonce,
+		"error":       "",
+		"duration_ms": 15,
+		"telemetry":   map[string]any{},
+		"tel_hash":    "",
+	}
+	powPayloadBytes, _ := json.Marshal(powPayload)
+	v2Hash := "v2." + base64.StdEncoding.EncodeToString(powPayloadBytes)
 
 	// 3. Вызовы API captchaNotRobot
 	callVKMethod := func(method string, form neturl.Values) (map[string]any, error) {
@@ -199,7 +224,7 @@ func SolveCaptchaLevel1(ctx context.Context, client *http.Client, challenge *Cha
 	checkParams.Set("connectionRtt", "[45,45,45,45,45]")
 	checkParams.Set("connectionDownlink", "[10.0,10.0,10.0,10.0]")
 	checkParams.Set("browser_fp", browserFP)
-	checkParams.Set("hash", powHash)
+	checkParams.Set("hash", v2Hash)
 	checkParams.Set("answer", base64.StdEncoding.EncodeToString([]byte("{}")))
 	checkParams.Set("debug_info", debugInfo)
 

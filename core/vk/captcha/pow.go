@@ -13,9 +13,14 @@ import (
 
 var ErrPoWTimeout = errors.New("captcha: PoW solution cancelled or timed out")
 
+// SolvePoWResult результат вычисления PoW.
+type SolvePoWResult struct {
+	Hash  string
+	Nonce uint64
+}
+
 // SolvePoW многопоточно находит hex-хеш SHA-256(powInput + nonce), начинающийся с difficulty нулей.
-// Использование всех доступных ядер процессора сокращает время поиска до сотых долей секунды.
-func SolvePoW(ctx context.Context, powInput string, difficulty int) (string, error) {
+func SolvePoW(ctx context.Context, powInput string, difficulty int) (*SolvePoWResult, error) {
 	if difficulty <= 0 {
 		difficulty = 1
 	}
@@ -26,7 +31,7 @@ func SolvePoW(ctx context.Context, powInput string, difficulty int) (string, err
 		numWorkers = 4
 	}
 
-	resultCh := make(chan string, 1)
+	resultCh := make(chan *SolvePoWResult, 1)
 	var found atomic.Bool
 	step := uint64(1000)
 
@@ -46,14 +51,15 @@ func SolvePoW(ctx context.Context, powInput string, difficulty int) (string, err
 				}
 
 				for i := uint64(0); i < step; i++ {
-					nonceStr := strconv.FormatUint(currNonce+i, 10)
+					n := currNonce + i
+					nonceStr := strconv.FormatUint(n, 10)
 					sum := sha256.Sum256([]byte(powInput + nonceStr))
 					hexStr := hex.EncodeToString(sum[:])
 
 					if strings.HasPrefix(hexStr, targetPrefix) {
 						if found.CompareAndSwap(false, true) {
 							select {
-							case resultCh <- hexStr:
+							case resultCh <- &SolvePoWResult{Hash: hexStr, Nonce: n}:
 							default:
 							}
 						}
@@ -62,7 +68,6 @@ func SolvePoW(ctx context.Context, powInput string, difficulty int) (string, err
 				}
 
 				currNonce += uint64(numWorkers) * step
-				// Ограничение диапазона поиска 10 миллионами
 				if currNonce > 10000000 {
 					return
 				}
@@ -72,7 +77,7 @@ func SolvePoW(ctx context.Context, powInput string, difficulty int) (string, err
 
 	select {
 	case <-ctx.Done():
-		return "", ErrPoWTimeout
+		return nil, ErrPoWTimeout
 	case res := <-resultCh:
 		return res, nil
 	}

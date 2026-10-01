@@ -44,39 +44,61 @@ func (rt *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 
 // NewHTTPClient создает новый клиент с кастомным DNS-резолвером и эмуляцией браузера.
 func NewHTTPClient(dnsServer string, profile BrowserProfile) *HTTPClient {
-	if dnsServer == "" {
-		dnsServer = "77.88.8.8:53"
-	}
-	if _, _, err := net.SplitHostPort(dnsServer); err != nil {
-		dnsServer = net.JoinHostPort(dnsServer, "53")
-	}
-
 	dialer := &net.Dialer{
 		Timeout:   15 * time.Second,
 		KeepAlive: 30 * time.Second,
-		Resolver: &net.Resolver{
+	}
+
+	if dnsServer != "" {
+		if _, _, err := net.SplitHostPort(dnsServer); err != nil {
+			dnsServer = net.JoinHostPort(dnsServer, "53")
+		}
+		dialer.Resolver = &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				d := net.Dialer{Timeout: 3 * time.Second}
-				// Пробуем кастомный DNS, при сбое - системный
 				conn, err := d.DialContext(ctx, "udp", dnsServer)
 				if err == nil {
 					return conn, nil
 				}
-				return d.DialContext(ctx, "udp", "77.88.8.8:53")
+				return net.Dial("udp", "77.88.8.8:53")
 			},
-		},
+		}
 	}
 
 	jar, _ := cookiejar.New(nil)
 
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return dialer.DialContext(ctx, network, addr)
+		}
+
+		// Для доменов VK отдаются несколько IP, один из которых (93.186.237.1) часто не отвечает на TLS.
+		// Отфильтровываем сбойный IP в пользу рабочего пула (95.213.56.1 и др.).
+		ips, err := net.LookupHost(host)
+		if err == nil && len(ips) > 1 {
+			for _, ip := range ips {
+				if ip == "93.186.237.1" {
+					continue
+				}
+				conn, dErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
+				if dErr == nil {
+					return conn, nil
+				}
+			}
+		}
+
+		return dialer.DialContext(ctx, network, addr)
+	}
+
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
+		DialContext:           dialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          50,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   4 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 

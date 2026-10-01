@@ -30,7 +30,7 @@ func main() {
 	workersFlag := flag.Int("workers", 9, "Number of parallel TURN workers (default 9)")
 	obfsFlag := flag.String("obfs", "audio", "Obfuscation mode: audio (Opus) or video (VP8)")
 	tunFlag := flag.String("tun", "netturn0", "Name of TUN interface (Linux)")
-	dnsFlag := flag.String("dns", "77.88.8.8", "Preferred DNS server")
+	dnsFlag := flag.String("dns", "", "Preferred DNS server (empty for system DNS)")
 	routesFlag := flag.Bool("routes", true, "Automatically apply system routing rules on Linux")
 	flag.Parse()
 

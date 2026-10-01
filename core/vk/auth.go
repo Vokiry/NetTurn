@@ -136,11 +136,8 @@ func fetchWithCredentials(ctx context.Context, client *HTTPClient, callHash stri
 						return nil, fmt.Errorf("step 3 captcha solve failed: %w", solveErr)
 					}
 
-					// Добавляем токены решения в форму для повторного запроса
+					// Добавляем полученный success_token для повторного запроса
 					anonTokenForm.Set("success_token", successToken)
-					anonTokenForm.Set("captcha_sid", challenge.CaptchaSID)
-					anonTokenForm.Set("captcha_ts", challenge.CaptchaTS)
-					anonTokenForm.Set("captcha_attempt", "1")
 					continue
 				}
 			}

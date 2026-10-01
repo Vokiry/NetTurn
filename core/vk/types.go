@@ -17,9 +17,6 @@ type AppCredentials struct {
 var DefaultAppCredentialsList = []AppCredentials{
 	{ClientID: "6287487", ClientSecret: "QbYic1K3lEV5kTGiqlq2", Description: "VK Web App"},
 	{ClientID: "7879029", ClientSecret: "aR5NKGmm03GYrCiNKsaw", Description: "VK Mobile Web"},
-	{ClientID: "52461373", ClientSecret: "o557NLIkAErNhakXrQ7A", Description: "VK Video Web"},
-	{ClientID: "52649896", ClientSecret: "WStp4ihWG4l3nmXZgIbC", Description: "VK Video Mobile"},
-	{ClientID: "51781872", ClientSecret: "IjjCNl4L4Tf5QZEXIHKK", Description: "VK ID Auth"},
 }
 
 // TurnCredentials содержит параметры доступа к медиа-релею OKCDN.
