@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Vokiry/NetTurn/core/bridge"
 	"github.com/Vokiry/NetTurn/core/eventbus"
 	"github.com/Vokiry/NetTurn/core/rawtun"
 	"github.com/Vokiry/NetTurn/core/turn"
@@ -28,8 +29,9 @@ type Engine struct {
 	callPool   *vk.CallPool
 	httpClient *vk.HTTPClient
 	workerPool *turn.WorkerPool
-	dispatcher *rawtun.Dispatcher
-	tun        rawtun.TunDevice
+	dispatcher  *rawtun.Dispatcher
+	bridgeProxy *bridge.DualProxy
+	tun         rawtun.TunDevice
 	peerAddr   *net.UDPAddr
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -38,6 +40,7 @@ type Engine struct {
 	mu         sync.RWMutex
 	stopOnce   sync.Once
 	isStarted  atomic.Bool
+	assignedIP string
 
 	// Метрики
 	prevUpBytes   int64
@@ -133,6 +136,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	e.emitPhase(PhaseWorkers, PhaseStatusOK, fmt.Sprintf("Воркеры активны (%d/%d)", e.workerPool.ActiveWorkersCount(), e.cfg.Workers))
 
+	assignedIP := e.workerPool.AssignedIP()
+	if assignedIP == "" {
+		assignedIP = "10.70.0.2"
+	}
+	e.assignedIP = assignedIP
+
 	// 5. Инициализация TUN адаптера
 	e.emitPhase(PhaseTUN, PhaseStatusRunning, "Конфигурация виртуального адаптера...")
 	e.setState(StateConfiguringTUN)
@@ -141,7 +150,14 @@ func (e *Engine) Start(ctx context.Context) error {
 	if e.cfg.AndroidFd > 0 {
 		tunDev, err = rawtun.WrapFd(e.cfg.AndroidFd, e.cfg.MTU)
 	} else {
-		tunDev, err = rawtun.CreateLinuxTun(e.cfg.TunName, e.cfg.MTU)
+		lt, lErr := rawtun.CreateLinuxTun(e.cfg.TunName, e.cfg.MTU)
+		if lErr != nil {
+			err = lErr
+		} else {
+			// Прямая настройка IP и перевод интерфейса в UP через ioctl
+			_ = lt.Configure(assignedIP)
+			tunDev = lt
+		}
 	}
 
 	if err != nil {
@@ -158,7 +174,13 @@ func (e *Engine) Start(ctx context.Context) error {
 	})
 	e.dispatcher.Start(e.ctx)
 
-	e.emitPhase(PhaseTUN, PhaseStatusOK, fmt.Sprintf("Адаптер %s поднят (MTU %d)", tunDev.Name(), tunDev.MTU()))
+	// 6. Инициализация LAN Bridge (SOCKS5 + HTTP CONNECT)
+	if e.cfg.LANBridgeEnabled {
+		e.bridgeProxy = bridge.NewDualProxy(e.cfg.LANBridgePort)
+		_ = e.bridgeProxy.Start(e.ctx)
+	}
+
+	e.emitPhase(PhaseTUN, PhaseStatusOK, fmt.Sprintf("Адаптер %s поднят (MTU %d, IP %s)", tunDev.Name(), tunDev.MTU(), assignedIP))
 	e.emitPhase(PhaseActive, PhaseStatusOK, "Туннель успешно подключен")
 	e.setState(StateConnected)
 
@@ -215,6 +237,7 @@ func (e *Engine) publishMetrics(now time.Time) {
 
 	metrics := EngineMetrics{
 		State:           st,
+		AssignedIP:      e.assignedIP,
 		UploadBytes:     upBytes,
 		DownloadBytes:   downBytes,
 		UploadRateBps:   upRate,
@@ -264,6 +287,7 @@ func (e *Engine) Metrics() EngineMetrics {
 
 	return EngineMetrics{
 		State:         st,
+		AssignedIP:    e.assignedIP,
 		UploadBytes:   upBytes,
 		DownloadBytes: downBytes,
 		ActiveWorkers: activeWorkers,
@@ -280,6 +304,9 @@ func (e *Engine) Stop() {
 
 		if e.cancel != nil {
 			e.cancel()
+		}
+		if e.bridgeProxy != nil {
+			e.bridgeProxy.Close()
 		}
 		if e.dispatcher != nil {
 			e.dispatcher.Close()

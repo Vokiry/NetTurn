@@ -34,6 +34,7 @@ const (
 )
 
 type clientSession struct {
+	deviceID   string
 	remoteAddr net.Addr
 	key        []byte
 	assignedIP string
@@ -50,7 +51,8 @@ type Server struct {
 	conn       net.PacketConn
 	sessionsMu sync.RWMutex
 	byRemote   map[string]*clientSession
-	byIP       map[string]*clientSession
+	byIP       map[string][]*clientSession
+	ipByDevice map[string]string
 	ipCounter  atomic.Uint32
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -79,7 +81,8 @@ func main() {
 		password:   *passFlag,
 		key:        key,
 		byRemote:   make(map[string]*clientSession),
-		byIP:       make(map[string]*clientSession),
+		byIP:       make(map[string][]*clientSession),
+		ipByDevice: make(map[string]string),
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -127,7 +130,6 @@ func main() {
 }
 
 func (s *Server) setupTun(name string) (rawtun.TunDevice, error) {
-	// Удаляем старый интерфейс, если остался от предыдущего запуска
 	_ = exec.Command("ip", "link", "del", name).Run()
 
 	tun, err := rawtun.CreateLinuxTun(name, serverMTU)
@@ -135,7 +137,6 @@ func (s *Server) setupTun(name string) (rawtun.TunDevice, error) {
 		return nil, err
 	}
 
-	// Назначаем IP и поднимаем интерфейс
 	for _, args := range [][]string{
 		{"addr", "add", serverTunCIDR, "dev", name},
 		{"link", "set", "mtu", strconv.Itoa(serverMTU), "dev", name},
@@ -151,15 +152,11 @@ func (s *Server) setupTun(name string) (rawtun.TunDevice, error) {
 }
 
 func (s *Server) setupFirewall() {
-	// Включаем IPv4 forwarding
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644)
 
-	// Добавляем MASQUERADE для подсети 10.70.0.0/16
 	_ = exec.Command("iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", clientSubnet, "-j", "MASQUERADE").Run()
 	_ = exec.Command("iptables", "-I", "FORWARD", "1", "-s", clientSubnet, "-j", "ACCEPT").Run()
 	_ = exec.Command("iptables", "-I", "FORWARD", "1", "-d", clientSubnet, "-j", "ACCEPT").Run()
-
-	// MSS Clamping для устранения Handshake Blackhole
 	_ = exec.Command("iptables", "-t", "mangle", "-A", "FORWARD", "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu").Run()
 
 	log.Println("[NetTurn Server] NAT rules & TCP MSS Clamping applied")
@@ -205,7 +202,6 @@ func (s *Server) uplinkLoop() {
 		// Обработка 1-байтового keepalive от клиента (0xFF)
 		if n == 1 && raw[0] == 0xFF {
 			s.touchSession(remoteAddr)
-			// Эхо-ответ 0xFF
 			_, _ = s.conn.WriteTo([]byte{0xFF}, remoteAddr)
 			continue
 		}
@@ -213,7 +209,6 @@ func (s *Server) uplinkLoop() {
 		// Дешифрация RTP пакета
 		decLen, err := protocol.UnwrapPacket(s.key, raw, plainBuf)
 		if err != nil {
-			// Неверный ключ или поврежденный пакет
 			continue
 		}
 
@@ -243,8 +238,11 @@ func (s *Server) uplinkLoop() {
 }
 
 func (s *Server) handleRawConf(remote net.Addr, sess *clientSession, req string) {
-	// RAWCONF:device_id|password|mtu|...
 	parts := strings.Split(strings.TrimPrefix(req, "RAWCONF:"), "|")
+	deviceID := "client"
+	if len(parts) >= 1 && parts[0] != "" {
+		deviceID = parts[0]
+	}
 	if len(parts) >= 2 {
 		pass := parts[1]
 		if pass != s.password {
@@ -253,17 +251,33 @@ func (s *Server) handleRawConf(remote net.Addr, sess *clientSession, req string)
 		}
 	}
 
-	// Выделяем IP клиенту
-	if sess.assignedIP == "" {
-		assigned := s.allocateClientIP()
-		sess.assignedIP = assigned
+	sess.deviceID = deviceID
 
-		s.sessionsMu.Lock()
-		s.byIP[assigned] = sess
-		s.sessionsMu.Unlock()
+	s.sessionsMu.Lock()
+	assigned, exists := s.ipByDevice[deviceID]
+	if !exists {
+		assigned = s.allocateClientIP()
+		s.ipByDevice[deviceID] = assigned
 	}
+	sess.assignedIP = assigned
 
-	resp := fmt.Sprintf("IP = %s\nDNS = 1.1.1.1\nMTU = %d\nCAPS = CHUNK1\n", sess.assignedIP, serverMTU)
+	// Добавляем сессию воркера в список воркеров для этого IP
+	found := false
+	for _, ws := range s.byIP[assigned] {
+		if ws == sess {
+			found = true
+			break
+		}
+	}
+	if !found {
+		s.byIP[assigned] = append(s.byIP[assigned], sess)
+	}
+	s.sessionsMu.Unlock()
+
+	log.Printf("[NetTurn Server] Worker authenticated from %s -> Device %s, Assigned IP %s",
+		remote.String(), deviceID, assigned)
+
+	resp := fmt.Sprintf("IP = %s\nDNS = 1.1.1.1\nMTU = %d\nCAPS = CHUNK1\n", assigned, serverMTU)
 	wire, err := protocol.WrapPacket(s.key, []byte(resp), sess.obfsCfg, sess.obfsState)
 	if err == nil {
 		_, _ = s.conn.WriteTo(wire, remote)
@@ -273,6 +287,7 @@ func (s *Server) handleRawConf(remote net.Addr, sess *clientSession, req string)
 // downlinkLoop читает обратный трафик из системного TUN и отправляет клиентам в соответствующие TURN-каналы.
 func (s *Server) downlinkLoop() {
 	buf := make([]byte, 2048)
+	var rr atomic.Uint32
 
 	for {
 		select {
@@ -297,18 +312,22 @@ func (s *Server) downlinkLoop() {
 		dstIP := net.IPv4(pkt[16], pkt[17], pkt[18], pkt[19]).String()
 
 		s.sessionsMu.RLock()
-		sess, ok := s.byIP[dstIP]
+		workers := s.byIP[dstIP]
 		s.sessionsMu.RUnlock()
 
-		if !ok || sess == nil || sess.remoteAddr == nil {
-			// Клиент с таким IP не найден или отключился
+		if len(workers) == 0 {
 			continue
 		}
 
-		// Шифруем и отправляем пакет в TURN-воркер клиента
-		wire, err := protocol.WrapPacket(s.key, pkt, sess.obfsCfg, sess.obfsState)
-		if err == nil {
-			_, _ = s.conn.WriteTo(wire, sess.remoteAddr)
+		// Выбираем активный воркер устройства
+		idx := int(rr.Add(1) % uint32(len(workers)))
+		targetSess := workers[idx]
+
+		wire, err := protocol.WrapPacket(s.key, pkt, targetSess.obfsCfg, targetSess.obfsState)
+		if err == nil && targetSess.remoteAddr != nil {
+			wn, wErr := s.conn.WriteTo(wire, targetSess.remoteAddr)
+			log.Printf("[NetTurn Server] Downlink to %s -> worker %s: wrote %d bytes (err=%v)",
+				dstIP, targetSess.remoteAddr.String(), wn, wErr)
 		}
 	}
 }
@@ -334,7 +353,6 @@ func (s *Server) getOrCreateSession(remote net.Addr, firstPacket []byte) *client
 	}
 
 	obfsCfg := protocol.NewRTPConfig(protocol.ObfsAudio)
-	// Если клиент шлет Video PayloadType (96), зеркалируем его на обратном пути
 	if len(firstPacket) > 1 && (firstPacket[1]&0x7F) == protocol.PayloadTypeVideo {
 		obfsCfg = protocol.NewRTPConfig(protocol.ObfsVideo)
 	}
@@ -376,7 +394,19 @@ func (s *Server) cleanupStaleSessionsLoop() {
 				if sess.lastSeen.Load() < cutoff {
 					delete(s.byRemote, remote)
 					if sess.assignedIP != "" {
-						delete(s.byIP, sess.assignedIP)
+						list := s.byIP[sess.assignedIP]
+						filtered := make([]*clientSession, 0, len(list))
+						for _, item := range list {
+							if item != sess {
+								filtered = append(filtered, item)
+							}
+						}
+						if len(filtered) == 0 {
+							delete(s.byIP, sess.assignedIP)
+							delete(s.ipByDevice, sess.deviceID)
+						} else {
+							s.byIP[sess.assignedIP] = filtered
+						}
 					}
 				}
 			}

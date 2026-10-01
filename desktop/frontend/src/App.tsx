@@ -56,19 +56,20 @@ export default function App() {
 
   const [pipeline, setPipeline] = useState<PipelineStep[]>(DEFAULT_PIPELINE);
   const [config, setConfig] = useState<EngineConfig>({
-    peer: '198.51.100.1:56003',
-    password: 'secure_password_123',
+    peer: '31.76.240.221:56003',
+    password: 'NetTurnSecret2026!',
     device_id: 'linux-desktop',
-    vk_links: ['https://vk.com/call/join/vPT-ovf0Q_lkaKXi2vaRJK1JJgaOwBYjelhuAMQll1s'],
+    vk_links: ['https://vk.ru/call/join/XIXUroUDyWuskRv0xWushezJ9IyjLZeOZSWnRhWDhao'],
     workers: 9,
     obfs: 'audio',
     captcha_mode: 'auto',
-    dns: '77.88.8.8',
+    dns: '',
     mtu: 1280,
     tun_name: 'netturn0',
-    lan_bridge_enabled: false,
+    lan_bridge_enabled: true,
     lan_bridge_port: 24066,
     turn_tcp: false,
+    enable_routing: false,
   });
 
   const [checkResult, setCheckResult] = useState<string>('');
@@ -412,6 +413,23 @@ export default function App() {
                     <option value="video">VP8 Video (PT 96)</option>
                   </select>
                 </div>
+              </div>
+
+              <div style={{ marginTop: '16px', padding: '14px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                  <input 
+                    type="checkbox"
+                    checked={config.enable_routing}
+                    onChange={(e) => setConfig({ ...config, enable_routing: e.target.checked })}
+                    style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)' }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Перехватывать весь интернет (VPN маршруты 0.0.0.0/1)</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      Оставьте выключенным, если уже подключены к другому VPN (работает через SOCKS5 на порту 24066).
+                    </div>
+                  </div>
+                </label>
               </div>
             </div>
           </div>

@@ -114,6 +114,9 @@ type EngineConfig struct {
 
 	// TurnTCP принудительное использование TCP для соединения с TURN
 	TurnTCP bool `json:"turn_tcp"`
+
+	// EnableRouting применять системные маршруты (0.0.0.0/1) на Linux
+	EnableRouting bool `json:"enable_routing"`
 }
 
 // DefaultEngineConfig возвращает конфигурацию по умолчанию.
@@ -125,9 +128,10 @@ func DefaultEngineConfig() EngineConfig {
 		DNS:              "",
 		MTU:              1280,
 		TunName:          "netturn0",
-		LANBridgeEnabled: false,
+		LANBridgeEnabled: true,
 		LANBridgePort:    24066,
 		TurnTCP:          false,
+		EnableRouting:    false, // По умолчанию выключено для безопасности текущего VPN!
 	}
 }
 

@@ -18,19 +18,20 @@ var (
 
 // WorkerPool управляет группой параллельных TURN-воркеров, реализуя каскадный запуск и Flow Affinity.
 type WorkerPool struct {
-	cfg          Config
-	callPool     *vk.CallPool
-	workers      []*Worker
-	flowTable    *protocol.FlowTable[*Worker]
-	onPacket     PacketHandler
-	obfs         protocol.ObfsType
-	rrCounter    atomic.Uint64
-	ctx          context.Context
-	cancel       context.CancelFunc
-	mu           sync.RWMutex
-	activeCount  atomic.Int32
-	isStarted    atomic.Bool
-	stopOnce     sync.Once
+	cfg         Config
+	callPool    *vk.CallPool
+	workers     []*Worker
+	flowTable   *protocol.FlowTable[*Worker]
+	onPacket    PacketHandler
+	obfs        protocol.ObfsType
+	rrCounter   atomic.Uint64
+	assignedIP  string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	mu          sync.RWMutex
+	activeCount atomic.Int32
+	isStarted   atomic.Bool
+	stopOnce    sync.Once
 }
 
 // NewWorkerPool создает новый пул воркеров.
@@ -99,6 +100,21 @@ func (p *WorkerPool) Start(ctx context.Context) error {
 		} else {
 			p.activeCount.Add(1)
 			startedCount++
+
+			if i == 0 {
+				// Воркер 0 получает назначенный IP синхронно без конкуренции горутин чтения
+				ip, hErr := w.HandshakeRawConf(p.cfg.DeviceID, p.cfg.Password, p.cfg.MTU)
+				if hErr == nil && ip != "" && p.assignedIP == "" {
+					p.assignedIP = ip
+				}
+				w.StartLoops()
+			} else {
+				// Вторичные воркеры регистрируются в фоне и активируют циклы чтения
+				go func(worker *Worker) {
+					_, _ = worker.HandshakeRawConf(p.cfg.DeviceID, p.cfg.Password, p.cfg.MTU)
+					worker.StartLoops()
+				}(w)
+			}
 		}
 
 		// Задержка перед запуском следующего воркера (защита от rate limit)
@@ -233,6 +249,11 @@ func (p *WorkerPool) watchdogLoop() {
 // ActiveWorkersCount возвращает число активных в данный момент воркеров.
 func (p *WorkerPool) ActiveWorkersCount() int {
 	return len(p.getLiveWorkers())
+}
+
+// AssignedIP возвращает IP-адрес клиента, выданный сервером.
+func (p *WorkerPool) AssignedIP() string {
+	return p.assignedIP
 }
 
 // Stats собирает суммарную статистику со всех воркеров пула.

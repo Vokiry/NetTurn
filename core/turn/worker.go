@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -132,12 +133,13 @@ func (w *Worker) Start(ctx context.Context, creds *vk.TurnCredentials, useTCP bo
 	w.relayConn = relayConn
 
 	w.state.Store(WorkerStateActive)
+	return nil
+}
 
-	// Запуск фоновых горутин чтения и keepalive
+// StartLoops запускает фоновые горутины чтения и периодического keepalive после завершения хэндшейка.
+func (w *Worker) StartLoops() {
 	go w.readLoop()
 	go w.keepaliveLoop()
-
-	return nil
 }
 
 // Send упаковывает пакет в RTP v2 с ChaCha20 AEAD и отправляет его на VPS сервер через TURN-релей.
@@ -160,6 +162,51 @@ func (w *Worker) Send(payload []byte) error {
 	w.packetsSent.Add(1)
 	w.lastSeen.Store(time.Now().UnixNano())
 	return nil
+}
+
+// HandshakeRawConf отправляет запрос RAWCONF на сервер и получает назначенный IP адрес.
+func (w *Worker) HandshakeRawConf(deviceID, password string, mtu int) (string, error) {
+	if mtu <= 0 {
+		mtu = 1280
+	}
+	if deviceID == "" {
+		deviceID = "client"
+	}
+
+	msg := fmt.Sprintf("RAWCONF:%s|%s|%d|CHUNK1", deviceID, password, mtu)
+	if err := w.Send([]byte(msg)); err != nil {
+		return "", fmt.Errorf("send rawconf: %w", err)
+	}
+
+	buf := make([]byte, 2048)
+	plain := make([]byte, 2048)
+	_ = w.relayConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, _, err := w.relayConn.ReadFrom(buf)
+	if err != nil {
+		return "", fmt.Errorf("read rawconf resp: %w", err)
+	}
+
+	decN, err := protocol.UnwrapPacket(w.key, buf[:n], plain)
+	if err != nil {
+		return "", fmt.Errorf("unwrap rawconf resp: %w", err)
+	}
+
+	respStr := string(plain[:decN])
+	if strings.Contains(respStr, "DENIED") {
+		return "", fmt.Errorf("server denied rawconf: %s", respStr)
+	}
+
+	for _, line := range strings.Split(respStr, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "IP =") || strings.HasPrefix(line, "IP=") {
+			parts := strings.Split(line, "=")
+			if len(parts) >= 2 {
+				return strings.TrimSpace(parts[1]), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("invalid rawconf response: %s", respStr)
 }
 
 func (w *Worker) readLoop() {
@@ -197,7 +244,6 @@ func (w *Worker) readLoop() {
 		// Дешифрация RTP пакета
 		decLen, err := protocol.UnwrapPacket(w.key, raw, plainBuf)
 		if err != nil {
-			// Отбрасываем невалидный или поврежденный пакет
 			continue
 		}
 

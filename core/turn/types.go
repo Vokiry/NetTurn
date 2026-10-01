@@ -38,6 +38,8 @@ type Config struct {
 	NumWorkers     int
 	PeerAddr       *net.UDPAddr
 	Password       string
+	DeviceID       string
+	MTU            int
 	UseTCP         bool
 	AllocateGateMs int // интервал каскадного запуска воркеров (по умолчанию 150 мс)
 }

@@ -84,9 +84,10 @@ func (a *App) StartTunnel(cfg core.EngineConfig) error {
 			return
 		}
 
-		// Автоматическая настройка защитных маршрутов Linux
-		_ = a.routeMgr.ProtectIP(cfg.Peer)
-		_ = a.routeMgr.EnableTunnelRoutes()
+		if cfg.EnableRouting {
+			_ = a.routeMgr.ProtectIP(cfg.Peer)
+			_ = a.routeMgr.EnableTunnelRoutes()
+		}
 	}()
 
 	a.isStarted = true
@@ -128,7 +129,7 @@ func (a *App) GetMetrics() core.EngineMetrics {
 
 // CheckCallHealth проверяет валидность ссылки на звонок без запуска полного туннеля.
 func (a *App) CheckCallHealth(link string) (string, error) {
-	client := vk.NewHTTPClient("77.88.8.8", vk.DefaultBrowserProfile())
+	client := vk.NewHTTPClient("", vk.DefaultBrowserProfile())
 	creds, err := vk.FetchTurnCredentials(context.Background(), client, link)
 	if err != nil {
 		return "", err

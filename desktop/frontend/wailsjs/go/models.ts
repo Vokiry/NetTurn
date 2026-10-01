@@ -15,6 +15,7 @@ export namespace core {
 	    lan_bridge_enabled: boolean;
 	    lan_bridge_port: number;
 	    turn_tcp: boolean;
+	    enable_routing: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new EngineConfig(source);
@@ -36,6 +37,7 @@ export namespace core {
 	        this.lan_bridge_enabled = source["lan_bridge_enabled"];
 	        this.lan_bridge_port = source["lan_bridge_port"];
 	        this.turn_tcp = source["turn_tcp"];
+	        this.enable_routing = source["enable_routing"];
 	    }
 	}
 	export class EngineMetrics {
